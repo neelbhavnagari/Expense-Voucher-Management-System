@@ -1,0 +1,32 @@
+{
+  "name": "expense-voucher-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Expense Voucher Management System",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "seed": "node src/seed.js",
+    "check:db": "node src/check-atlas.js",
+    "test": "jest --runInBand --detectOpenHandles"
+  },
+  "keywords": ["expense", "voucher", "management", "express", "jwt", "mongoose"],
+  "author": "ABC Company Developer",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.5.1",
+    "multer": "^1.4.5-lts.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "mongodb-memory-server": "^9.4.0",
+    "morgan": "^1.10.0",
+    "nodemon": "^3.1.4",
+    "supertest": "^7.0.0"
+  }
+}
