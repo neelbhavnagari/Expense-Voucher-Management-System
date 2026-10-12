@@ -152,6 +152,9 @@ expense-voucher-management/
 │   │   ├── validators/
 │   │   │   ├── authValidator.js
 │   │   │   └── voucherValidator.js
+│   │   ├── migrations/
+│   │   │   ├── schema.sql            # Relational PostgreSQL/MySQL schema DDL
+│   │   │   └── init-mongo.js         # MongoDB index & collection initializer
 │   │   ├── utils/
 │   │   │   ├── generateVoucherNumber.js
 │   │   │   ├── ApiError.js
@@ -172,6 +175,7 @@ expense-voucher-management/
 │   ├── database-schema.md
 │   └── api-documentation.md
 │
+├── .env.example                      # Root environment configuration
 ├── .gitignore
 ├── README.md
 └── package.json
@@ -255,6 +259,203 @@ Test Results:
 
 ---
 
+## 🗄️ Database Schema Explanation
+
+The application is built on **MongoDB (with Mongoose)** and includes portable **SQL DDL schema files (`backend/src/migrations/schema.sql`)** for relational database compatibility.
+
+### 1. Entity Relationship (ER) Diagram
+
+```text
++-----------------------------------+
+|               User                |
++-----------------------------------+
+| _id          : ObjectId (PK)      |
+| name         : String             |
+| email        : String (Unique)    |
+| password     : String (Hashed)    |
+| role         : Enum               |<----+
+| employeeId   : String             |     |
+| department   : String             |     | 1:N Relationship
+| signature    : String (Data/URL)  |     | (Employee creates vouchers)
++-----------------------------------+     |
+                  |                       |
+                  | 1:N (Reviewed By)     |
+                  v                       |
++-----------------------------------------+--+
+|                  Voucher                   |
++--------------------------------------------+
+| _id               : ObjectId (PK)          |
+| voucherNumber     : String (Unique, Index) |
+| voucherDate       : Date                   |
+| expenseDate       : Date                   |
+| department        : String                 |
+| title             : String                 |
+| category          : String                 |
+| description       : String                 |
+| amount            : Number (> 0)           |
+| employeeName      : String                 |
+| employeeId        : String                 |
+| employeeSignature : String (Image/Canvas)  |
+| status            : Enum                   |
+|                   ['Draft',                |
+|                    'Pending Approval',     |
+|                    'Approved',             |
+|                    'Rejected']             |
+| directorSignature : String (Image/Canvas)  |
+| approvalDate      : Date                   |
+| rejectionReason   : String (if rejected)   |
+| submittedAt       : Date                   |
+| createdBy         : ObjectId (FK -> User)  |
+| reviewedBy        : ObjectId (FK -> User)  |
+| createdAt         : Date                   |
+| updatedAt         : Date                   |
++--------------------------------------------+
+```
+
+### 2. Model Schemas in Detail
+
+#### `User` Collection (`users` table)
+- `_id` / `id` (ObjectId/UUID): Unique primary identifier.
+- `name` (String, Required): Full display name of the user.
+- `email` (String, Required, Unique, Lowercase, Indexed): Corporate email address.
+- `password` / `password_hash` (String, Required): Securely hashed with bcrypt (salt = 10 rounds).
+- `role` (Enum, Required): Role-based access level (`Employee`, `Director`, `Accounts`).
+- `employeeId` (String, Optional): Corporate badge identifier (e.g. `EMP-101`).
+- `department` (String, Optional): Operational department (e.g. `Engineering`, `Marketing`).
+- `signature` (String, Optional): Saved default signature data URI or image URL.
+- `createdAt` / `updatedAt` (Timestamps): Standard audit timestamps.
+
+#### `Voucher` Collection (`vouchers` table)
+- `_id` / `id` (ObjectId/UUID): Unique voucher identifier.
+- `voucherNumber` (String, Required, Unique, Indexed): Sequential identifier in `EV-YYYYMM-XXXX` format.
+- `voucherDate` (Date, Required): Voucher creation/claim date (defaults to current timestamp).
+- `expenseDate` (Date, Required): Date the expenditure was actually incurred.
+- `department` (String, Required): Claiming department.
+- `title` (String, Required): Summary title of the expenditure.
+- `category` (String, Required): Expense categorization (`Travel`, `Software & Tools`, `Office Supplies`, `Meals & Entertainment`, `Client Meeting`, `General`).
+- `description` (String, Optional): Detailed breakdown or justification.
+- `amount` (Number, Required, Min: 0.01): Total claimed expense amount strictly greater than zero.
+- `employeeName` (String, Required): Name of the claiming employee.
+- `employeeId` (String, Optional): Badge identifier of the claimant.
+- `employeeSignature` (String, Mandatory for submission): Base64 image data URI or uploaded signature URL.
+- `status` (Enum, Default: `Draft`): Lifecycle stage (`Draft`, `Pending Approval`, `Approved`, `Rejected`).
+- `directorSignature` (String, Mandatory for approval): Base64 image data URI or uploaded signature of the reviewing Director.
+- `approvalDate` (Date, Nullable): Timestamp of Director's approval or rejection.
+- `rejectionReason` (String, Mandatory if rejected): Director's remarks explaining rejection.
+- `submittedAt` (Date, Nullable): Timestamp when employee submitted voucher for review.
+- `createdBy` (ObjectId/UUID, Ref: `User`): Foreign key identifying the voucher author.
+- `reviewedBy` (ObjectId/UUID, Ref: `User`, Nullable): Foreign key identifying the approving/rejecting Director.
+- `createdAt` / `updatedAt` (Timestamps): Document audit history.
+
+### 3. Database Indexes & Integrity Constraints
+1. **Uniqueness**: Unique index on `voucherNumber` prevents duplicates across parallel submissions.
+2. **User Identity**: Unique index on `email` prevents duplicate registrations.
+3. **Optimized Lookups**: Compound indexes on `status`, `department`, `createdBy`, and `createdAt` enable instant filter and search queries.
+4. **Amount Integrity**: Check constraint `amount > 0` prevents negative or zero valuations.
+5. **State Transition Rules**:
+   - Vouchers can only be updated or deleted while in `Draft` state.
+   - Vouchers cannot be submitted without an `employeeSignature`.
+   - Vouchers cannot be approved without a `directorSignature`.
+   - Vouchers cannot be rejected without a non-empty `rejectionReason`.
+
+Schema and migration files are located at:
+- SQL DDL Migration: [`backend/src/migrations/schema.sql`](backend/src/migrations/schema.sql)
+- MongoDB Index Migration: [`backend/src/migrations/init-mongo.js`](backend/src/migrations/init-mongo.js)
+- Extended Schema Reference: [`docs/database-schema.md`](docs/database-schema.md)
+
+---
+
+## 📡 API Documentation
+
+Base URL: `http://localhost:5000/api`
+
+All protected endpoints require a valid JWT Bearer token in the request header:
+```http
+Authorization: Bearer <jwt_token>
+```
+
+### Endpoints Overview
+
+| Category | Method | Endpoint | Access Level | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Auth** | `POST` | `/auth/login` | Public | Authenticate user & issue JWT |
+| **Auth** | `POST` | `/auth/register` | Public | Register a new user |
+| **Auth** | `GET` | `/auth/me` | Protected (All) | Get current authenticated user profile |
+| **Vouchers** | `GET` | `/vouchers` | Protected (All) | List vouchers (scoped by role with filters & pagination) |
+| **Vouchers** | `POST` | `/vouchers` | Employee | Create voucher (Draft or Submit) |
+| **Vouchers** | `GET` | `/vouchers/:id` | Protected (All) | Get voucher details by ID |
+| **Vouchers** | `PUT` | `/vouchers/:id` | Employee (Creator) | Edit voucher (Draft only) |
+| **Vouchers** | `DELETE`| `/vouchers/:id` | Employee (Creator) | Delete voucher (Draft only) |
+| **Vouchers** | `POST` | `/vouchers/:id/submit`| Employee (Creator) | Submit draft voucher for approval with signature |
+| **Vouchers** | `POST` | `/vouchers/upload-signature` | Protected (All) | Upload physical signature image file |
+| **Approvals** | `GET` | `/approvals/pending` | Director | List all vouchers pending executive review |
+| **Approvals** | `POST` | `/approvals/:id/approve` | Director | Approve voucher with Director signature |
+| **Approvals** | `POST` | `/approvals/:id/reject` | Director | Reject voucher with mandatory reason |
+| **Dashboard** | `GET` | `/dashboard/stats` | Protected (All) | Get role-specific KPI cards and recent metrics |
+
+### Sample Payloads
+
+#### 1. Login (`POST /api/auth/login`)
+```json
+// Request:
+{
+  "email": "john.doe@abccompany.com",
+  "password": "Password123!"
+}
+
+// Response (200 OK):
+{
+  "success": true,
+  "message": "Login successful.",
+  "data": {
+    "user": {
+      "_id": "67080e72c8402b1f1589a101",
+      "name": "John Doe",
+      "email": "john.doe@abccompany.com",
+      "role": "Employee",
+      "employeeId": "EMP-101",
+      "department": "Engineering"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
+}
+```
+
+#### 2. Create Voucher (`POST /api/vouchers`)
+```json
+// Request:
+{
+  "title": "AWS Cloud Infrastructure",
+  "department": "Engineering",
+  "category": "Software & Tools",
+  "expenseDate": "2026-10-10",
+  "amount": 3250.00,
+  "description": "Monthly production server hosting invoice",
+  "status": "Draft",
+  "employeeSignature": "data:image/svg+xml;utf8,<svg..."
+}
+```
+
+#### 3. Director Approval (`POST /api/approvals/:id/approve`)
+```json
+// Request:
+{
+  "directorSignature": "data:image/svg+xml;utf8,<svg..."
+}
+```
+
+#### 4. Director Rejection (`POST /api/approvals/:id/reject`)
+```json
+// Request:
+{
+  "rejectionReason": "Itemized tax invoice receipt is required for reimbursement."
+}
+```
+
+Extended API documentation is available at: [`docs/api-documentation.md`](docs/api-documentation.md).
+
+---
+
 ## 📐 Assumptions Made During Development
 
 1. **Voucher Numbering**:
@@ -262,8 +463,24 @@ Test Results:
 2. **Draft Vouchers vs Submission**:
    Employees can save a voucher as a **Draft** even before attaching a signature. However, submitting for Director approval (`Pending Approval`) strictly requires a valid signature image or drawn canvas.
 3. **Database Portability**:
-   The backend connects to MongoDB if `MONGODB_URI` is provided, and gracefully defaults to an in-memory MongoDB server (`mongodb-memory-server`) with pre-seeded demo users and realistic vouchers so that evaluators can run the project out-of-the-box without configuring an external database.
+   The backend connects to MongoDB if `MONGODB_URI` is provided, and gracefully defaults to an in-memory MongoDB server (`mongodb-memory-server`) with pre-seeded demo users and realistic vouchers so that evaluators can run the project out-of-the-box without configuring an external database. Relational SQL schemas are also supplied for SQL migrations.
 4. **Signature Options**:
    Both image upload (PNG, JPG, SVG) and dynamic HTML5 Canvas signature drawing are provided. Drawing exports high-resolution PNG data URIs that persist identically to uploaded images.
 5. **Read-Only Guarantees**:
    Once submitted, vouchers become read-only for employees. Once approved or rejected, vouchers are strictly read-only for all roles to preserve audit compliance.
+6. **Role Isolation**:
+   Employees can view and manage only their own vouchers. Directors and Accounts officers have organization-wide visibility. Accounts officers have read-only audit and print access without modification rights.
+
+---
+
+## 📋 Submission Requirements Checklist (Section 13 Compliance)
+
+| Requirement | Location / Artifact | Status |
+| :--- | :--- | :--- |
+| **GitHub repository with complete source code** | `https://github.com/neelbhavnagari/Expense-Voucher-Management-System` | ✅ Complete |
+| **README: Project setup instructions** | [`README.md # Getting Started & Setup Instructions`](#getting-started--setup-instructions) | ✅ Complete |
+| **README: Database schema explanation** | [`README.md # Database Schema Explanation`](#database-schema-explanation) | ✅ Complete |
+| **README: API documentation** | [`README.md # API Documentation`](#api-documentation) | ✅ Complete |
+| **README: Assumptions made** | [`README.md # Assumptions Made During Development`](#assumptions-made-during-development) | ✅ Complete |
+| **Database schema or migration files** | [`backend/src/migrations/schema.sql`](backend/src/migrations/schema.sql)<br>[`backend/src/migrations/init-mongo.js`](backend/src/migrations/init-mongo.js)<br>[`backend/src/models/`](backend/src/models/) | ✅ Complete |
+| **.env.example file** | [`.env.example`](.env.example)<br>[`backend/.env.example`](backend/.env.example)<br>[`frontend/.env.example`](frontend/.env.example) | ✅ Complete |

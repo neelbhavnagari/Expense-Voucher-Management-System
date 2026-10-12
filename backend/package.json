@@ -7,6 +7,7 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "seed": "node src/seed.js",
+    "migrate": "node src/migrations/init-mongo.js",
     "check:db": "node src/check-atlas.js",
     "test": "jest --runInBand --detectOpenHandles"
   },
